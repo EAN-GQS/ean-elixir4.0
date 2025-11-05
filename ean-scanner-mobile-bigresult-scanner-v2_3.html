@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>EAN Scanner (Mobile + Handheld) — v2.3</title>
+  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+  <style>
+    :root { --brand: #2196F3; --ok:#4CAF50; --bad:#f44336; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; background:#f6f7f9; color:#111; }
+    .wrap { max-width: 680px; margin: 0 auto; padding: 16px; }
+    .card { background:#fff; border-radius:14px; box-shadow:0 6px 18px rgba(0,0,0,.08); overflow:hidden; }
+    header { background:var(--brand); color:#fff; padding:20px; text-align:center; }
+    header h1 { font-size:22px; font-weight:700; }
+    .pad { padding:16px; }
+    .row { display:flex; gap:10px; flex-wrap: wrap; }
+    button { appearance:none; border:0; background:var(--brand); color:#fff; padding:12px 14px; border-radius:10px; font-weight:700; font-size:16px; cursor:pointer; }
+    button.secondary { background:#666; }
+    button.success { background:var(--ok); }
+    button.danger { background:var(--bad); }
+    button.icon { display:flex; align-items:center; gap:8px; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .note { background:#e3f2fd; border:2px solid var(--brand); color:#0b67c2; padding:12px; border-radius:10px; margin:12px 0; font-size:14px; }
+    .camera { position: relative; border-radius:12px; overflow:hidden; background:#000; margin:10px 0; display:none; }
+    .camera.active { display:block; }
+    video#preview { width:100%; height:auto; display:block; background:#000; }
+    .scan-frame { position:absolute; width:260px; height:180px; border:2px solid var(--ok); border-radius:10px; left:50%; top:50%; transform:translate(-50%,-50%); box-shadow:0 0 0 9999px rgba(0,0,0,.45); }
+    .scan-line { position:absolute; left:calc(50% - 120px); width:240px; height:2px; background:var(--ok); top:calc(50% - 60px); box-shadow:0 0 10px var(--ok); animation:scan 1.8s linear infinite; }
+    input[type="text"] { flex:1; padding:12px; border:2px solid #e5e7eb; border-radius:10px; font-size:16px; }
+    .result { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9999; display: none; padding: 18px 22px; border-radius: 12px; border: 3px solid var(--ok); background: #e8f5e9f0; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.2); opacity: 0; transition: opacity 0.3s ease-in-out; }
+    .result.show { opacity: 1; display: block; }
+    .result .label { font-size: 18px; color: #444; }
+    .result .value { font-size: 48px; font-weight: 900; color: var(--brand); margin-top: 4px; }
+    .result.error { border-color: var(--bad); background: #ffebeef0; }
+    .result.error .value { color: var(--bad); font-size: 36px; }
+    .status { margin-top:8px; font-size:12px; color:#334155; display:flex; align-items:center; gap:8px; }
+    .dot { width:10px; height:10px; border-radius:50%; background:#94a3b8; display:inline-block; }
+    .dot.ok { background: var(--ok); }
+    .dot.bad { background: var(--bad); }
+    .scanner-mode { display:none; margin-top: 10px; }
+    .scanner-mode.active { display:block; }
+    .scanner-box { background:#f1f5f9; border:2px dashed #94a3b8; padding:14px; border-radius:12px; }
+    .scanner-input { width:100%; padding:12px; border:2px solid #cbd5e1; border-radius:10px; font-size:18px; background:#fff; letter-spacing:2px; }
+    .scanner-hint { font-size:12px; color:#64748b; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <header>
+        <h1>📦 EAN Scanner</h1>
+        <p>Camera or Handheld scanner. HTTPS recommended.</p>
+      </header>
+
+      <div class="pad">
+        <div class="note">
+          v2.3 restores your original database and keeps: digits-only, auto-clear, and Hard Reset.
+        </div>
+
+        <div class="row">
+          <button id="modeCameraBtn" class="success icon">🎥 Camera Mode</button>
+          <button id="modeScannerBtn" class="secondary icon">🧰 Handheld Scanner Mode</button>
+          <button id="hardResetBtn" class="danger icon">♻️ Hard Reset</button>
+        </div>
+
+        <div class="status"><span id="statDot" class="dot"></span><span id="statText">Idle</span></div>
+
+        <div id="cameraSection">
+          <div class="row" style="margin-top:10px;">
+            <button id="startBtn" class="success icon">📹 Start Live Camera</button>
+            <button id="stopBtn" class="danger icon" disabled>⏹ Stop</button>
+            <button id="torchBtn" class="icon" disabled>🔦 Torch</button>
+            <button id="switchBtn" class="secondary icon" disabled>🔁 Switch Camera</button>
+          </div>
+
+          <div class="camera" id="cameraBox">
+            <video id="preview" autoplay playsinline muted></video>
+            <div class="scan-frame"></div>
+            <div class="scan-line"></div>
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <input id="manual" type="text" placeholder="Enter EAN manually" inputmode="numeric" />
+            <button id="manualBtn">Lookup</button>
+          </div>
+        </div>
+
+        <div id="scannerSection" class="scanner-mode">
+          <div class="scanner-box">
+            <input id="scannerSink" class="scanner-input" type="text" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Focus here & scan…" />
+            <div class="scanner-hint">Digits only; any letters/prefixes from the scanner will be ignored automatically.</div>
+          </div>
+        </div>
+
+        <div id="out" class="result">
+          <div class="label">Location</div>
+          <div id="outValue" class="value"></div>
+          <div id="outEan" class="muted"></div>
+        </div>
+
+        <div class="status" style="margin-top:12px;">Database loaded: <span id="dbCount">0</span> EANs</div>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <script>
+    const Hints = ZXing.DecodeHintType;
+    const Formats = ZXing.BarcodeFormat;
+    const hints = new Map();
+    hints.set(Hints.POSSIBLE_FORMATS, [Formats.EAN_13, Formats.EAN_8, Formats.UPC_A, Formats.UPC_E, Formats.CODE_128]);
+
+    // Restored from your original file:
+    const eanDatabase = {"7630867864045":"Pallet 1","7630867864052":"Pallet 1","7630867864076":"Pallet 1","7630867864083":"Pallet 1","7630867864090":"Pallet 1","7630867864106":"Pallet 1","7630867864113":"Pallet 1","7630867864120":"Pallet 1","7630867864137":"Pallet 1","7630867864144":"Pallet 1","7630867864151":"Pallet 1","7630867864175":"Pallet 1","7630867896411":"Tafel 1","7630867896428":"Tafel 1","7630867896435":"Tafel 1","7630867896442":"Tafel 1","7630867896459":"Tafel 1","7630867896480":"Tafel 1","7630867896497":"Tafel 1","7630867896510":"Tafel 1","7630867838374":"Tafel 1","7630867838381":"Tafel 1","7630867838398":"Tafel 1","7630867838411":"Tafel 1","7630867838428":"Tafel 1","7630867838459":"Tafel 1","7630867838480":"Tafel 1","7630867881196":"Tafel 1","7630867881219":"Tafel 1","7630867881226":"Tafel 1","7630867881233":"Tafel 1","7630867881257":"Tafel 1","7630867881288":"Tafel 1","7630867881295":"Tafel 1","7630867824667":"Tafel 1","7630867824674":"Tafel 1","7630867824681":"Tafel 1","7630867824698":"Tafel 1","7630867824704":"Tafel 1","7630867824711":"Tafel 1","7630867824728":"Tafel 1","7630419177548":"Tafel 1","7630419177555":"Tafel 1","7630419177593":"Tafel 1","7630419177609":"Tafel 1","7630419177623":"Tafel 1","7630419177630":"Tafel 1","7630419177654":"Tafel 1","7630440633839":"Tafel 1","7630440633846":"Tafel 1","7630440633853":"Tafel 1","7630440633860":"Tafel 1","7630440633877":"Tafel 1","7630440633921":"Tafel 1","7630867883619":"Tafel 1","7630867883657":"Tafel 1","7630867883671":"Tafel 1","7630867883701":"Tafel 1","7630867883718":"Tafel 1","7630867883725":"Tafel 1","7640404587726":"Tafel 1","7640404587733":"Tafel 1","7640404587757":"Tafel 1","7640404587788":"Tafel 1","7640404587818":"Tafel 1","7640404587825":"Tafel 1","7630867882414":"Tafel 1","7630867882421":"Tafel 1","7630867882438":"Tafel 1","7630867882445":"Tafel 1","7630867882452":"Tafel 1","7630867882469":"Tafel 1","7630867893335":"Tafel 1","7630867893359":"Tafel 1","7630867893373":"Tafel 1","7630867893380":"Tafel 1","7630867893410":"Tafel 1","7630867894165":"Tafel 2","7630867894189":"Tafel 2","7630867894196":"Tafel 2","7630867894219":"Tafel 2","7630867894226":"Tafel 2","7630867841299":"Tafel 2","7630867841312":"Tafel 2","7630867841350":"Tafel 2","7630867841367":"Tafel 2","7630867841404":"Tafel 2","7615537006147":"Tafel 2","7615537006154":"Tafel 2","7615537006185":"Tafel 2","7615537006246":"Tafel 2","7615537006253":"Tafel 2","7630867825886":"Tafel 2","7630867825916":"Tafel 2","7630867825978":"Tafel 2","7630867826005":"Tafel 2","7630867826012":"Tafel 2","7615537008448":"Tafel 2","7615537008462":"Tafel 2","7615537008523":"Tafel 2","7615537008530":"Tafel 2","7615537008547":"Tafel 2","7630867884302":"Tafel 2","7630867884326":"Tafel 2","7630867884333":"Tafel 2","7630867884357":"Tafel 2","7630867884388":"Tafel 2","7630867828276":"Tafel 2","7630867828313":"Tafel 2","7630867828320":"Tafel 2","7630867828337":"Tafel 2","7630867828382":"Tafel 2","7615537009407":"Tafel 2","7615537009445":"Tafel 2","7615537009452":"Tafel 2","7615537009483":"Tafel 2","7615537009506":"Tafel 2","7630040588393":"Tafel 2","7630040588447":"Tafel 2","7630040588454":"Tafel 2","7630040588461":"Tafel 2","7630040588478":"Tafel 2","7630867833171":"Tafel 2","7630867833195":"Tafel 2","7630867833249":"Tafel 2","7630867833256":"Tafel 2","7630867833270":"Tafel 2","7630867836172":"Tafel 3","7630867836189":"Tafel 3","7630867836202":"Tafel 3","7630867836264":"Tafel 3","7630867891683":"Tafel 3","7630867891690":"Tafel 3","7630867891737":"Tafel 3","7630867891744":"Tafel 3","7630867885125":"Tafel 3","7630867885156":"Tafel 3","7630867885170":"Tafel 3","7630867885194":"Tafel 3","7630867882568":"Tafel 3","7630867882575":"Tafel 3","7630867882599":"Tafel 3","7630867882636":"Tafel 3","7630867837070":"Tafel 3","7630867837117":"Tafel 3","7630867837124":"Tafel 3","7630867837162":"Tafel 3","7630419104872":"Pallet 2","7630419104926":"Pallet 2","7630419104971":"Pallet 2","7630419104995":"Pallet 2","7615537155449":"Tafel 3","7615537155463":"Tafel 3","7615537155531":"Tafel 3","7615537155548":"Tafel 3","7630867841022":"Tafel 3","7630867841046":"Tafel 3","7630867841060":"Tafel 3","7630867841091":"Tafel 3","7630867886627":"Tafel 3","7630867886641":"Tafel 3","7630867886665":"Tafel 3","7630867886672":"Tafel 3","7630440660217":"Tafel 3","7630440660248":"Tafel 3","7630440660293":"Tafel 3","7630440660316":"Tafel 3","7615537044408":"Tafel 3","7615537044439":"Tafel 3","7615537044446":"Tafel 3","7615537044491":"Tafel 3","7630867829815":"Tafel 4","7630867829822":"Tafel 4","7630867829846":"Tafel 4","7630867829914":"Tafel 4","7630867877632":"Tafel 4","7630867877649":"Tafel 4","7630867877700":"Tafel 4","7630867877731":"Tafel 4","7630867835380":"Tafel 4","7630867835403":"Tafel 4","7630867835410":"Tafel 4","7630867835502":"Tafel 4","7615537003849":"Tafel 4","7615537003870":"Tafel 4","7615537003887":"Tafel 4","7615537003924":"Tafel 4","7630867821604":"Tafel 4","7630867821635":"Tafel 4","7630867821697":"Tafel 4","7630867821727":"Tafel 4","7630040571449":"Tafel 4","7630040571463":"Tafel 4","7630040571487":"Tafel 4","7630040571500":"Tafel 4","7615537003733":"Tafel 4","7615537003740":"Tafel 4","7615537003832":"Tafel 4","7630419175247":"Tafel 4","7630419175254":"Tafel 4","7630419175377":"Tafel 4","7630440635383":"Tafel 4","7630440635451":"Tafel 4","7630440635482":"Tafel 4","7630440699279":"Tafel 4","7630440699347":"Tafel 4","7630440699361":"Tafel 4","7630419175674":"Tafel 4","7630419175681":"Tafel 4","7630419175698":"Tafel 4","7630419176176":"Tafel 4","7630419176183":"Tafel 4","7630419176299":"Tafel 4","7630867838534":"Tafel 4","7630867838541":"Tafel 4","7630867838626":"Tafel 4","7630867812992":"Tafel 4","7630867813029":"Tafel 4","7630867813050":"Tafel 4","7630867825657":"Tafel 4","7630867825695":"Tafel 4","7630867825718":"Tafel 4","7615537011646":"Tafel 5","7615537011691":"Tafel 5","7615537011745":"Tafel 5","7630867832211":"Tafel 5","7630867832228":"Tafel 5","7630867832242":"Tafel 5","7615537011820":"Tafel 5","7615537011837":"Tafel 5","7615537011899":"Tafel 5","7615537109602":"Tafel 5","7615537109619":"Tafel 5","7615537109640":"Tafel 5","7615537012612":"Tafel 5","7615537012674":"Tafel 5","7615537012681":"Tafel 5","7630440656210":"Tafel 5","7630440656227":"Tafel 5","7630440656234":"Tafel 5","7630867836714":"Tafel 5","7630867836745":"Tafel 5","7630867836752":"Tafel 5","7630867878059":"Tafel 5","7630867878103":"Tafel 5","7630867878134":"Tafel 5","7630867835144":"Tafel 5","7630867835229":"Tafel 5","7630867835236":"Tafel 5","7630867897081":"Tafel 5","7630867897104":"Tafel 5","7630867897166":"Tafel 5","7615537007663":"Tafel 5","7615537007670":"Tafel 5","7615537007687":"Tafel 5","7630867892123":"Tafel 5","7630867892154":"Tafel 5","7630867892161":"Tafel 5","7630419174189":"Tafel 5","7630419174264":"Tafel 5","7630419174271":"Tafel 5","7630867824070":"Tafel 5","7630867824100":"Tafel 5","7630867824117":"Tafel 5","7630419106395":"Tafel 5","7630419106470":"Tafel 5","7630419106494":"Tafel 5","7630867819007":"Tafel 6","7630867819083":"Tafel 6","7630867819120":"Tafel 6","7630867830521":"Tafel 6","7630867830538":"Tafel 6","7630867830545":"Tafel 6","7630867835823":"Tafel 6","7630867835861":"Tafel 6","7630867835892":"Tafel 6","7630867837995":"Tafel 6","7630867838022":"Tafel 6","7630867838077":"Tafel 6","7630440654827":"Tafel 6","7630440654841":"Tafel 6","7630440654872":"Tafel 6","7630419103547":"Tafel 6","7630419103554":"Tafel 6","7630419103622":"Tafel 6","7615537005072":"Tafel 6","7615537005102":"Tafel 6","7615537005164":"Tafel 6","7630867884838":"Tafel 6","7630867884883":"Tafel 6","7630867884890":"Tafel 6","7630867838695":"Tafel 6","7630867838725":"Tafel 6","7630867838749":"Tafel 6","7630867884197":"Tafel 6","7630867884210":"Tafel 6","7630867884265":"Tafel 6","7630867837506":"Tafel 6","7630867837551":"Tafel 6","7630867837568":"Tafel 6","7630419105305":"Tafel 6","7630419105381":"Tafel 6","7630419105398":"Tafel 6","7630867831481":"Tafel 6","7630867831597":"Tafel 6","7630867831603":"Tafel 6","7630867878769":"Tafel 6","7630867878790":"Tafel 6","7630867878806":"Tafel 6","7615537002644":"Tafel 6","7615537002750":"Tafel 6","7630867826210":"Tafel 7","7630867826258":"Tafel 7","7630419160823":"Tafel 7","7630419160847":"Tafel 7","7630419121268":"Tafel 7","7630419121343":"Tafel 7","7615537123332":"Tafel 7","7615537123349":"Tafel 7","7630867890815":"Tafel 7","7630867890822":"Tafel 7","7615537155296":"Tafel 7","7615537155371":"Tafel 7","7630867813920":"Tafel 7","7630867813951":"Tafel 7","7630867827606":"Tafel 7","7630867827699":"Tafel 7","7615537012223":"Tafel 7","7615537012285":"Tafel 7","7630419112716":"Tafel 7","7630419112839":"Tafel 7","7630440628996":"Tafel 7","7630440632207":"Tafel 7","7630867898576":"Tafel 7","7630867898675":"Tafel 7","7630867833430":"Tafel 7","7630867833553":"Tafel 7","7630867822434":"Tafel 7","7630867822458":"Tafel 7","7630440637738":"Tafel 7","7630440637752":"Tafel 7","7630419118107":"Tafel 8","7630419118114":"Tafel 8","7615537010939":"Tafel 8","7615537010984":"Tafel 8","7630440627852":"Tafel 8","7630440627869":"Tafel 8","7630867822977":"Tafel 8","7630867823011":"Tafel 8","7630867839685":"Tafel 8","7630867839692":"Tafel 8","7630440698036":"Tafel 8","7630440698043":"Tafel 8","7630419112112":"Tafel 8","7630419112136":"Tafel 8","7640404582486":"Tafel 8","7640404582608":"Tafel 8","7630867833973":"Tafel 8","7630867834062":"Tafel 8","7630867878646":"Tafel 8","7630867878653":"Tafel 8","7630419106258":"Tafel 8","7630419106357":"Tafel 8","7630419191469":"Tafel 8","7630419191490":"Tafel 8","7630040592321":"Tafel 8","7630040592376":"Tafel 8","7630419111108":"Tafel 8","7630419111221":"Tafel 8","7630040595865":"Tafel 8","7630040595872":"Tafel 8","7630867879544":"Tafel 9","7630867879599":"Tafel 9","7615537106625":"Tafel 9","7615537106717":"Tafel 9","7630867835014":"Tafel 9","7630867835069":"Tafel 9","7615537006307":"Tafel 9","7615537006369":"Tafel 9","7630419110972":"Tafel 9","7630419111085":"Tafel 9","7615537006833":"Tafel 9","7615537006918":"Tafel 9","7630419102182":"Tafel 9","7630419102212":"Tafel 9","7630867837797":"Tafel 9","7630867837803":"Tafel 9","7630867881042":"Tafel 9","7630867881110":"Tafel 9","7630867825848":"Tafel 9","7630867825855":"Tafel 9","7630867893847":"Tafel 9","7630867893854":"Tafel 9","7630867829389":"Tafel 9","7630867829433":"Tafel 9","7630419170280":"Tafel 9","7630419170303":"Tafel 9","7630867826340":"Tafel 9","7630867826401":"Tafel 9","7630867894028":"Tafel 9","7630867894066":"Tafel 9","7630867878462":"Tafel 10","7630867878561":"Tafel 10","7630867881592":"Tafel 10","7630867881660":"Tafel 10","7630419173885":"Tafel 10","7630419173922":"Tafel 10","7630867895254":"Tafel 10","7630867895278":"Tafel 10","7615537003047":"Tafel 10","7615537003108":"Tafel 10","7630440640554":"Tafel 10","7630440640578":"Tafel 10","7615537003320":"Tafel 10","7615537003429":"Tafel 10","7630419179641":"Tafel 10","7630419179658":"Tafel 10","7630440656036":"Tafel 10","7630440656050":"Tafel 10","7630867825077":"Tafel 10","7630867825169":"Tafel 10","7630867884975":"Tafel 10","7630867885002":"Tafel 10","7630440639107":"Tafel 10","7630440639121":"Tafel 10","7630867829761":"Tafel 10","7630867829792":"Tafel 10","7630867839630":"Tafel 10","7630867839647":"Tafel 10","7630867887976":"Tafel 10","7630867887990":"Tafel 10","7630040575072":"Tafel 1","7630040575157":"Tafel 1","7630867838800":"Tafel 1","7630867838855":"Tafel 1","7630867817744":"Tafel 1","7630867817782":"Tafel 1","7615537003634":"Tafel 1","7615537003665":"Tafel 1","7630867817836":"Tafel 1","7630867817959":"Tafel 1","7630867821994":"Tafel 2","7630867822090":"Tafel 2","7630867818710":"Tafel 2","7630867818727":"Tafel 2","7615537011547":"Tafel 2","7615537011585":"Tafel 2","7630419105718":"Tafel 2","7630419105817":"Tafel 2","7630419118923":"Tafel 2","7630419119043":"Tafel 2","7630419106005":"Tafel 3","7630419106036":"Tafel 3","7630440612247":"Tafel 3","7630440612292":"Tafel 3","7630867897364":"Tafel 3","7630867897388":"Tafel 3","7630440664345":"Tafel 3","7630440664369":"Tafel 3","7630867814873":"Tafel 3","7630867814880":"Tafel 3","7615537088617":"Tafel 11","7615537088624":"Tafel 11","7630867884623":"Tafel 11","7630867884685":"Tafel 11","7630867855302":"Tafel 11","7630867855364":"Tafel 11","7630419173229":"Tafel 11","7630419173281":"Tafel 11","7630419180814":"Tafel 11","7630419180876":"Tafel 11","7630867826029":"Tafel 11","7630867826036":"Tafel 11","7630867891560":"Tafel 11","7630867891652":"Tafel 11","7630440699026":"Tafel 11","7630440699040":"Tafel 11","7630440663355":"X","7630440629870":"X","7630440663461":"X","7630867882018":"X","7630867828177":"X","7630440699880":"X","7630867834734":"X","7640404589591":"X","7630419175605":"X","7630867879476":"X","7630440653448":"Tafel 11","7630867824896":"X","7630440654582":"Tafel 11","7630419103233":"X","7615537043357":"X","7630867815344":"X","7630867895964":"X","7630419172703":"X","7630440640097":"Tafel","7630867880878":"X","7640404589652":"Tafel 11","7630440658474":"X","7615537009100":"X","7630440630463":"X","7630867821079":"X","7630440630708":"X","7630867828993":"X","7630867822618":"X","7630440659648":"X","7630867897951":"X","7630440698302":"X","7630419172420":"Tafel 11","7630867880175":"X","7615537092218":"X","7630419110668":"X","7630867822298":"X","7630867892987":"X","7630040593953":"X","7630867865868":"X","7630419173199":"X","7630867819243":"X","7615537000381":"X","7630867815467":"X","7630867882315":"X","7630867899757":"X","7630040577779":"X","7630867832464":"X","7630867838114":"X","7630440654995":"Tafel 11","7630419173052":"X","7630867820614":"X","7630040590051":"X","7615537010373":"X","7630867863925":"Tafel 11","7630419111825":"Tafel11","7630867883039":"X","7630867877076":"Tafel 11","7615537001470":"X","7630440659396":"Pallet 3","7630419103080":"X","7630419119302":"X","7615537002446":"Tafel 11","7630867877946":"Tafel 11","7630867829952":"X","7615537009643":"X","7630867883244":"X","7630867825466":"X","7630440639800":"X","7630867830781":"X","7630867818369":"X","7630867831023":"X","7630867890112":"X","7630440659822":"X","7630867884074":"X","7630867885231":"Tafel 11","7630040514446":"X","7630419170693":"X","7630867880618":"X","7615537123479":"X","7630419172604":"X","7630419113751":"Tafel 11","7630419115878":"X","7630867884524":"Tafel11","7630419105503":"X","7630867835762":"X","7630440656470":"X","7630419110828":"X","7630867834482":"X","7630867835960":"X","7630419174387":"X","7615537008196":"X","7630867816860":"X","7615537000824":"X","7630419174776":"X","7630440613701":"X","7615537003009":"X","7615537002033":"Tafel 11","7630867888263":"X","7615537009131":"Tafel 11","7630867831825":"X","7630419115953":"X","7630867883145":"X","7630867882131":"Tafel 11","7630867890983":"X","7630867820867":"X","7630867891225":"Tafel 11","7630867821086":"X","7630419163169":"X","7630440670162":"X","7630419104131":"X","7630040575881":"X","7630867880755":"Tafel 11","7615537005256":"X","7630419165064":"X","7630040596084":"X","7630867834451":"X","7615537088549":"X","7630419162698":"X","7630867826586":"X","7630440652717":"X","7630419177029":"X","7630867891294":"X","7630867837056":"X","7630419177524":"X","7615537089058":"X","7630867878868":"Tafel 11","7615537007564":"X","7630419110743":"X","7630867834116":"Tafel 11","7630419118077":"X","7630440631347":"X","7630867839074":"X","7630867814132":"X","7630867824360":"Tafel 11","7630419113164":"X","7630419170112":"X","7630867880106":"X","7630867891867":"X","7630867885729":"X","7630419180562":"X","7630040596237":"X","7630867879087":"Tafel 11","7630867894301":"Tafel 11","7630867836394":"X","7630867877861":"X"}
+
+    const cameraSection = document.getElementById('cameraSection');
+    const scannerSection = document.getElementById('scannerSection');
+    const modeCameraBtn = document.getElementById('modeCameraBtn');
+    const modeScannerBtn = document.getElementById('modeScannerBtn');
+    const hardResetBtn = document.getElementById('hardResetBtn');
+    const cameraBox = document.getElementById('cameraBox');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const switchBtn = document.getElementById('switchBtn');
+    const torchBtn = document.getElementById('torchBtn');
+    const out = document.getElementById('out');
+    const outValue = document.getElementById('outValue');
+    const outEan = document.getElementById('outEan');
+    const manual = document.getElementById('manual');
+    const manualBtn = document.getElementById('manualBtn');
+    const videoEl = document.getElementById('preview');
+    const scannerSink = document.getElementById('scannerSink');
+    const statDot = document.getElementById('statDot');
+    const statText = document.getElementById('statText');
+
+    let codeReader = null, currentDeviceId, stream = null, scanning = false, lastBeepAt = 0;
+
+    function setStatus(text, ok=null){ statText.textContent = text; statDot.classList.remove('ok','bad'); if (ok===true) statDot.classList.add('ok'); else if (ok===false) statDot.classList.add('bad'); }
+    function ensureReader(){ if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader(hints); }
+
+    function showResult(location, ean, isError=false){
+      out.className = 'result show' + (isError ? ' error' : '');
+      outValue.textContent = location; outEan.textContent = 'EAN: ' + ean;
+      if (!isError) beep(); if (scanning) setTimeout(()=>{ if (scanning) out.classList.remove('show'); }, 3000);
+    }
+    function beep(){ const now=Date.now(); if(now-lastBeepAt<300) return; lastBeepAt=now; try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(); const g=ctx.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination); g.gain.setValueAtTime(0.25, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+0.12); o.start(); o.stop(ctx.currentTime+0.12);}catch{} }
+
+    // digits-only sanitizer
+    function digitsOnly(s){ return String(s||'').replace(/\D+/g, ''); }
+
+    // aggressive clearing of any EAN/barcode fields
+    function clearScanFields(){
+      const own = [manual, scannerSink].filter(Boolean);
+      own.forEach(el => { try{ el.value=''; }catch{} });
+      const candidates = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'));
+      candidates.forEach(el => {
+        const idn = (el.id || '') + ' ' + (el.name || '') + ' ' + (el.getAttribute('aria-label') || '');
+        const marked = el.matches?.('.scan-input, [data-scan-field]');
+        const looksLikeScan = /ean|barcode|bar\s*code|code/i.test(idn);
+        if (marked || looksLikeScan) {
+          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = '';
+          else if (el.isContentEditable) el.textContent = '';
+        }
+      });
+    }
+
+    function lookupEAN(raw){
+      const ean = digitsOnly(raw);
+      if (!ean) return;
+      if (eanDatabase[ean]) showResult(eanDatabase[ean], ean, false);
+      else showResult('EAN not found in database', ean, true);
+      clearScanFields();
+      if (scannerSection.classList.contains('active')) setTimeout(()=>scannerSink?.focus(), 0);
+    }
+
+    async function listCameras(){ try{ ensureReader(); const devices=await codeReader.listVideoInputDevices(); return devices||[]; }catch{ return []; } }
+    function chooseBestDevice(devices){ if(!devices.length) return; const back=devices.find(d=>/back|rear|environment/i.test(d.label)); return back? back.deviceId : devices[devices.length-1].deviceId; }
+
+    async function startCamera(){
+      setStatus('Starting camera…'); startBtn.disabled=true;
+      try{
+        stopCamera(true); ensureReader();
+        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false });
+        videoEl.srcObject = stream; await videoEl.play();
+        await new Promise(res=>{ if(videoEl.readyState>=2) res(); else videoEl.onloadeddata=()=>res(); });
+        const devices=await listCameras(); currentDeviceId=chooseBestDevice(devices);
+        await startDecoding(); cameraBox.classList.add('active'); scanning=true;
+        stopBtn.disabled=false; switchBtn.disabled=devices.length<2; torchBtn.disabled=!supportsTorch();
+        setStatus('Camera running', true);
+      }catch(err){ alert(buildCameraErrorMessage(err)); setStatus('Camera error', false); stopCamera(); }
+      finally{ startBtn.disabled=false; }
+    }
+    function supportsTorch(){ const track=(videoEl.srcObject && videoEl.srcObject.getVideoTracks()[0])||null; if(!track) return false; const caps=track.getCapabilities? track.getCapabilities():{}; return !!caps.torch; }
+    async function toggleTorch(){ const track=(videoEl.srcObject && videoEl.srcObject.getVideoTracks()[0])||null; if(!track) return; try{ const caps=track.getCapabilities(); if(!caps.torch) return; const settings=track.getSettings(); const enable=!settings.torch; await track.applyConstraints({ advanced:[{ torch: enable }] }); }catch{} }
+    async function startDecoding(){ ensureReader(); try{ codeReader.reset(); }catch{}; await codeReader.decodeFromVideoDevice(currentDeviceId, 'preview', (result)=>{ if(result && result.text){ lookupEAN(result.text); } }); }
+    function buildCameraErrorMessage(err){
+      let msg='Camera failed to start.\n\n'; if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ return msg+'This browser does not support camera access. Try Chrome/Edge on Android or Safari 15+ on iPhone.'; }
+      if(err && err.name==='NotAllowedError'){ msg+='Permission denied. On iPhone: Settings > Safari > Camera > Allow. HTTPS required.'; }
+      else if(err && err.name==='NotFoundError'){ msg+='No camera found.'; }
+      else { msg += (err&&err.message)? err.message : String(err||''); }
+      return msg;
+    }
+    function stopCamera(silent=false){
+      scanning=false; try{ if(codeReader) codeReader.reset(); }catch{}; if(stream){ try{ stream.getTracks().forEach(t=>t.stop()); }catch{}; stream=null; }
+      videoEl.srcObject=null; cameraBox.classList.remove('active'); stopBtn.disabled=true; switchBtn.disabled=true; torchBtn.disabled=true;
+      if(!silent) setStatus('Camera stopped');
+    }
+    async function switchCamera(){ const devices=await listCameras(); if(devices.length<2) return; const idx=devices.findIndex(d=>d.deviceId===currentDeviceId); const next=devices[(idx+1)%devices.length]; currentDeviceId=next.deviceId; await startDecoding(); torchBtn.disabled=!supportsTorch(); }
+    function hardReset(){
+      setStatus('Resetting…'); stopCamera(true);
+      try{ if(codeReader){ codeReader.reset(); codeReader=null; } }catch{}
+      try{ navigator.mediaDevices && navigator.mediaDevices.getUserMedia && navigator.mediaDevices.getUserMedia({video:true}).then(s=>s.getTracks().forEach(t=>t.stop())).catch(()=>{}); }catch{}
+      out.classList.remove('show'); setTimeout(()=> setStatus('Idle'), 200);
+      if (scannerSection.classList.contains('active')) setTimeout(()=>scannerSink?.focus(), 50);
+    }
+
+    // Handheld scanner: digits-only & buffered
+    let scannerBuffer='', scannerTimer=null; const SCAN_TIMEOUT_MS=120;
+    function handleScannerKeydown(e){
+      const isDigit = /^[0-9]$/.test(e.key);
+      const isEnter = e.key === 'Enter';
+      const isBackspace = e.key === 'Backspace';
+      if (!isDigit && !isEnter && !isBackspace) { e.preventDefault(); return; }
+      if (isEnter) { e.preventDefault(); const code = scannerBuffer || digitsOnly(scannerSink.value); scannerBuffer=''; lookupEAN(code); return; }
+      if (isDigit) {
+        scannerBuffer += e.key;
+        if (scannerTimer) clearTimeout(scannerTimer);
+        scannerTimer = setTimeout(()=>{ const code=scannerBuffer; scannerBuffer=''; lookupEAN(code); }, SCAN_TIMEOUT_MS);
+      } else if (isBackspace) {
+        scannerBuffer = scannerBuffer.slice(0, -1);
+      }
+    }
+    function handleScannerInput(){ const clean = digitsOnly(scannerSink.value); if (scannerSink.value !== clean) scannerSink.value = clean; }
+
+    setInterval(()=>{ if (scannerSection.classList.contains('active') && document.activeElement !== scannerSink) scannerSink.focus(); }, 1500);
+
+    function activateScannerMode(){ stopCamera(true); cameraSection.style.display='none'; scannerSection.classList.add('active'); setTimeout(()=>scannerSink.focus(), 60); scanning=true; setStatus('Scanner mode ready', true); }
+    function activateCameraMode(){ scannerSection.classList.remove('active'); cameraSection.style.display='block'; scanning=false; setStatus('Camera mode selected'); }
+
+    modeCameraBtn.addEventListener('click', activateCameraMode);
+    modeScannerBtn.addEventListener('click', activateScannerMode);
+    hardResetBtn.addEventListener('click', hardReset);
+    startBtn.addEventListener('click', startCamera);
+    stopBtn.addEventListener('click', stopCamera);
+    switchBtn.addEventListener('click', switchCamera);
+    torchBtn.addEventListener('click', toggleTorch);
+
+    manualBtn.addEventListener('click', () => lookupEAN(digitsOnly(manual.value)));
+    manual.addEventListener('keypress', e => { if (e.key === 'Enter') { e.preventDefault(); manualBtn.click(); } });
+
+    scannerSink.addEventListener('keydown', handleScannerKeydown);
+    scannerSink.addEventListener('input', handleScannerInput);
+
+    document.addEventListener('visibilitychange', () => { if (document.hidden) stopCamera(true); });
+    window.addEventListener('beforeunload', stopCamera);
+
+    activateCameraMode();
+    document.getElementById('dbCount').textContent = Object.keys(eanDatabase).length;
+  </script>
+</body>
+</html>
